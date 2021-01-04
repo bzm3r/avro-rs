@@ -311,7 +311,7 @@ pub struct UnionSchema {
 }
 
 impl UnionSchema {
-    pub(crate) fn new(schemas: Vec<Schema>) -> AvroResult<Self> {
+    pub fn new(schemas: Vec<Schema>) -> AvroResult<Self> {
         let mut vindex = HashMap::new();
         for (i, schema) in schemas.iter().enumerate() {
             if let Schema::Union(_) = schema {
