@@ -124,6 +124,12 @@ impl<'b> ser::Serializer for &'b mut Serializer {
         self.serialize_i32(i32::from(v))
     }
 
+    #[cfg(feature = "u32-as-long")]
+    fn serialize_u32(self, v: u32) -> Result<Self::Ok, Self::Error> {
+        self.serialize_i64(i64::from(v))
+    }
+
+    #[cfg(not(feature = "u32-as-long"))]
     fn serialize_u32(self, v: u32) -> Result<Self::Ok, Self::Error> {
         if v <= i32::max_value() as u32 {
             self.serialize_i32(v as i32)

@@ -10,7 +10,8 @@ edition = "2018"
 
 [features]
 snappy = ["crc", "snap"]
-schematize = ["avro-schema-derive"]
+u32-as-long = []
+schematize = ["avro-schema-derive", "u32-as-long"]
 
 [lib]
 path = "src/lib.rs"

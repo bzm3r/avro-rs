@@ -689,7 +689,7 @@ mod writer;
 pub mod rabin;
 pub mod schema;
 pub mod schema_compatibility;
-#[cfg(feature(schematize))]
+#[cfg(feature = "schematize")]
 pub mod schema_gen;
 pub mod types;
 
