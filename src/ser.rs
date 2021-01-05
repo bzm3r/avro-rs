@@ -31,6 +31,11 @@ pub struct StructVariantSerializer<'a> {
     fields: Vec<(String, Value)>,
 }
 
+pub struct TupleSerializer {
+    fields: Vec<(String, Value)>,
+    pub len: usize,
+}
+
 impl SeqSerializer {
     pub fn new(len: Option<usize>) -> SeqSerializer {
         let items = match len {
@@ -39,20 +44,6 @@ impl SeqSerializer {
         };
 
         SeqSerializer { items }
-    }
-}
-
-impl<'a> SeqVariantSerializer<'a> {
-    pub fn new(index: u32, variant: &'a str, len: Option<usize>) -> SeqVariantSerializer {
-        let items = match len {
-            Some(len) => Vec::with_capacity(len),
-            None => Vec::new(),
-        };
-        SeqVariantSerializer {
-            index,
-            variant,
-            items,
-        }
     }
 }
 
@@ -85,13 +76,22 @@ impl<'a> StructVariantSerializer<'a> {
     }
 }
 
+impl TupleSerializer {
+    pub fn new(len: usize) -> TupleSerializer {
+        TupleSerializer {
+            len,
+            fields: Vec::with_capacity(len),
+        }
+    }
+}
+
 impl<'b> ser::Serializer for &'b mut Serializer {
     type Ok = Value;
     type Error = Error;
     type SerializeSeq = SeqSerializer;
-    type SerializeTuple = SeqSerializer;
-    type SerializeTupleStruct = SeqSerializer;
-    type SerializeTupleVariant = SeqVariantSerializer<'b>;
+    type SerializeTuple = TupleSerializer;
+    type SerializeTupleStruct = StructSerializer;
+    type SerializeTupleVariant = StructVariantSerializer<'b>;
     type SerializeMap = MapSerializer;
     type SerializeStruct = StructSerializer;
     type SerializeStructVariant = StructVariantSerializer<'b>;
@@ -233,7 +233,7 @@ impl<'b> ser::Serializer for &'b mut Serializer {
     }
 
     fn serialize_tuple(self, len: usize) -> Result<Self::SerializeTuple, Self::Error> {
-        self.serialize_seq(Some(len))
+        Ok(TupleSerializer::new(len))
     }
 
     fn serialize_tuple_struct(
@@ -241,7 +241,7 @@ impl<'b> ser::Serializer for &'b mut Serializer {
         _: &'static str,
         len: usize,
     ) -> Result<Self::SerializeTupleStruct, Self::Error> {
-        self.serialize_seq(Some(len))
+        Ok(StructSerializer::new(len))
     }
 
     fn serialize_tuple_variant(
@@ -251,7 +251,7 @@ impl<'b> ser::Serializer for &'b mut Serializer {
         variant: &'static str,
         len: usize,
     ) -> Result<Self::SerializeTupleVariant, Self::Error> {
-        Ok(SeqVariantSerializer::new(index, variant, Some(len)))
+        Ok(StructVariantSerializer::new(index, variant, len))
     }
 
     fn serialize_map(self, len: Option<usize>) -> Result<Self::SerializeMap, Self::Error> {
@@ -295,23 +295,7 @@ impl<'a> ser::SerializeSeq for SeqSerializer {
     }
 }
 
-impl<'a> ser::SerializeTuple for SeqSerializer {
-    type Ok = Value;
-    type Error = Error;
-
-    fn serialize_element<T: ?Sized>(&mut self, value: &T) -> Result<(), Self::Error>
-    where
-        T: Serialize,
-    {
-        ser::SerializeSeq::serialize_element(self, value)
-    }
-
-    fn end(self) -> Result<Self::Ok, Self::Error> {
-        ser::SerializeSeq::end(self)
-    }
-}
-
-impl ser::SerializeTupleStruct for SeqSerializer {
+impl ser::SerializeTupleStruct for StructSerializer {
     type Ok = Value;
     type Error = Error;
 
@@ -319,11 +303,15 @@ impl ser::SerializeTupleStruct for SeqSerializer {
     where
         T: Serialize,
     {
-        ser::SerializeSeq::serialize_element(self, value)
+        self.fields.push((
+            self.fields.len().to_string(),
+            value.serialize(&mut Serializer::default())?,
+        ));
+        Ok(())
     }
 
     fn end(self) -> Result<Self::Ok, Self::Error> {
-        ser::SerializeSeq::end(self)
+        Ok(Value::Record(self.fields))
     }
 }
 
@@ -349,22 +337,6 @@ impl<'a> ser::SerializeSeq for SeqVariantSerializer<'a> {
             ),
             ("value".to_owned(), Value::Array(self.items)),
         ]))
-    }
-}
-
-impl<'a> ser::SerializeTupleVariant for SeqVariantSerializer<'a> {
-    type Ok = Value;
-    type Error = Error;
-
-    fn serialize_field<T: ?Sized>(&mut self, value: &T) -> Result<(), Self::Error>
-    where
-        T: Serialize,
-    {
-        ser::SerializeSeq::serialize_element(self, value)
-    }
-
-    fn end(self) -> Result<Self::Ok, Self::Error> {
-        Ok(ser::SerializeSeq::end(self)?)
     }
 }
 
@@ -431,6 +403,32 @@ impl ser::SerializeStruct for StructSerializer {
     }
 }
 
+impl ser::SerializeTuple for TupleSerializer {
+    type Ok = Value;
+    type Error = Error;
+
+    fn serialize_element<T: ?Sized>(&mut self, value: &T) -> Result<(), Self::Error>
+    where
+        T: Serialize,
+    {
+        self.fields.push((
+            self.fields.len().to_string(),
+            value.serialize(&mut Serializer::default())?,
+        ));
+        Ok(())
+    }
+
+    fn end(self) -> Result<Self::Ok, Self::Error> {
+        if self.fields.len() == self.len {
+            Ok(Value::Record(self.fields))
+        } else {
+            Err(ser::Error::custom(
+                "Tuple length does not match number of elements serialized.",
+            ))
+        }
+    }
+}
+
 impl<'a> ser::SerializeStructVariant for StructVariantSerializer<'a> {
     type Ok = Value;
     type Error = Error;
@@ -455,6 +453,35 @@ impl<'a> ser::SerializeStructVariant for StructVariantSerializer<'a> {
             (
                 "type".to_owned(),
                 Value::Enum(self.index as i32, self.variant.to_owned()),
+            ),
+            (
+                "value".to_owned(),
+                Value::Union(Box::new(Value::Record(self.fields))),
+            ),
+        ]))
+    }
+}
+
+impl<'a> ser::SerializeTupleVariant for StructVariantSerializer<'a> {
+    type Ok = Value;
+    type Error = Error;
+
+    fn serialize_field<T: ?Sized>(&mut self, value: &T) -> Result<(), Self::Error>
+    where
+        T: Serialize,
+    {
+        self.fields.push((
+            self.fields.len().to_string(),
+            value.serialize(&mut Serializer::default())?,
+        ));
+        Ok(())
+    }
+
+    fn end(self) -> Result<Self::Ok, Self::Error> {
+        Ok(Value::Record(vec![
+            (
+                "type".to_owned(),
+                Value::Enum(self.index as i32, self.index.to_string()),
             ),
             (
                 "value".to_owned(),
